@@ -521,6 +521,11 @@ class ReverseV2Test(test_util.TensorFlowTestCase):
               np_answer = x_np[::-1, :, :]
               self.assertAllEqual(x_tf, np_answer)
 
+  def testReverseInvalidShape(self):
+    x = np.ndarray(shape=[0, 1, 1])
+    v = array_ops.reverse_v2(x, axis=[1])
+    self.assertAllEqual(self.evaluate(v), v)
+
 
 class MeshgridTest(test_util.TensorFlowTestCase):
 
@@ -800,7 +805,7 @@ class StridedSliceTest(test_util.TensorFlowTestCase):
   def testExpandVariable(self):
     with self.session(use_gpu=True):
       x = variables.Variable(7, dtype=dtypes.int32)
-      x.initializer.run()
+      self.evaluate(x.initializer)
       y = x[None].eval()
       self.assertEqual(y.shape, (1,))
       self.assertAllEqual(y, (7,))
@@ -1069,11 +1074,11 @@ class StridedSliceBenchmark(test_lib.Benchmark):
   def run_and_time(self, slice_op):
     self.evaluate(variables.global_variables_initializer())
     for _ in range(10):
-      _ = slice_op.eval()
+      _ = self.evaluate(slice_op)
     iters = 1000
     t0 = time.time()
     for _ in range(iters):
-      slice_op.eval()
+      self.evaluate(slice_op)
     t1 = time.time()
     self.report_benchmark(iters=iters, wall_time=(t1 - t0) / 1000.0)
 
@@ -1474,7 +1479,7 @@ class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
     with self.cached_session():
       a = array_ops.constant(10)
       guarantee_a = array_ops.guarantee_const(a)
-      self.assertEqual(10, guarantee_a.eval())
+      self.assertEqual(10, self.evaluate(guarantee_a))
 
   @test_util.run_deprecated_v1
   def testVariables(self):
@@ -1487,7 +1492,7 @@ class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
               use_resource=use_resource)
           guarantee_a = array_ops.guarantee_const(a)
           self.evaluate(variables.global_variables_initializer())
-          self.assertEqual(10.0, guarantee_a.eval())
+          self.assertEqual(10.0, self.evaluate(guarantee_a))
 
   @test_util.run_deprecated_v1
   def testResourceRejection(self):
@@ -1500,7 +1505,7 @@ class GuaranteeConstOpTest(test_util.TensorFlowTestCase):
       self.evaluate(variables.global_variables_initializer())
       with self.assertRaisesWithPredicateMatch(errors.InvalidArgumentError,
                                                "cannot be a resource variable"):
-        guarantee_a.eval()
+        self.evaluate(guarantee_a)
 
 
 class SnapshotOpTest(test_util.TensorFlowTestCase):

@@ -623,7 +623,6 @@ tf_cc_test(
     name = "parallel_interleave_dataset_op_test",
     size = "small",
     srcs = ["parallel_interleave_dataset_op_test.cc"],
-    tags = ["notsan"],  # TODO(b/147147071): Remove this tag once bug fix lands.
     deps = [
         ":captured_function",
         ":dataset_test_base",
@@ -1243,6 +1242,7 @@ tf_kernel_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core/platform:platform_port",
     ],
 )
 

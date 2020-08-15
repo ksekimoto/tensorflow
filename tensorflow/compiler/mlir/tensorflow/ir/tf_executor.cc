@@ -54,9 +54,6 @@ namespace tf_executor {
 
 namespace {
 
-using TF::DropRefType;
-using TF::DropTypeSubTypes;
-
 struct TensorFlowExecutorInlinerInterface : public DialectInlinerInterface {
   using DialectInlinerInterface::DialectInlinerInterface;
 
@@ -92,7 +89,8 @@ struct TensorFlowExecutorOpFolderDialectInterface
 }  // namespace
 
 TensorFlowExecutorDialect::TensorFlowExecutorDialect(MLIRContext *context)
-    : Dialect(/*name=*/"tf_executor", context) {
+    : Dialect(/*name=*/"tf_executor", context,
+              TypeID::get<TensorFlowExecutorDialect>()) {
   addOperations<
 #define GET_OP_LIST
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc.inc"
@@ -190,14 +188,15 @@ LogicalResult Verify(GraphOp graph) {
   for (int i : llvm::seq<int>(0, fetch.getNumOperands())) {
     Value operand = fetch.getOperand(i);
     // Break out of the loop at the first control operand encountered.
+    const int64_t num_results = graph.getNumResults();
     if (operand.getType().isa<ControlType>()) {
-      if (i != graph.getNumResults())
+      if (i != num_results)
         return fetch.emitOpError()
                << "operand #" << i
                << " is a control type, can't be bound to a graph result";
       break;
     }
-    if (i >= graph.getNumResults())
+    if (i >= num_results)
       return fetch.emitOpError()
              << "operand #" << i << " does not have a graph results to bind";
     if (graph.getResult(i).getType() != operand.getType())
@@ -311,7 +310,8 @@ LogicalResult Verify(IslandOp island) {
 
   // Ensure that the yield terminator operands matches the island results type.
   int result_count = island.getNumResults() - 1;  // -1 for the control token
-  if (yield.getNumOperands() != result_count)
+  const int num_operands = yield.getNumOperands();
+  if (num_operands != result_count)
     return yield.emitOpError()
            << "has " << yield.getNumOperands()
            << " operand, but island returns " << result_count;
@@ -548,8 +548,8 @@ LogicalResult Verify(SwitchNOp switchn) {
              << operand0_tensor_type << " vs " << output_tensor_type;
     }
     Type broadcasted_type = OpTrait::util::getBroadcastedType(
-        DropRefType(DropTypeSubTypes(operand0_tensor_type)),
-        DropRefType(DropTypeSubTypes(output_tensor_type)));
+        TF::DropRefAndSubTypes(operand0_tensor_type),
+        TF::DropRefAndSubTypes(output_tensor_type));
     if (!broadcasted_type) {
       return switchn.emitOpError()
              << "expects data operand to be broadcastable with all output types"
@@ -665,8 +665,8 @@ LogicalResult Verify(MergeOp merge) {
              << operand_tensor_ty << " vs " << output_tensor_ty;
     }
     Type broadcasted_type = OpTrait::util::getBroadcastedType(
-        DropRefType(DropTypeSubTypes(output_tensor_ty)),
-        DropRefType(DropTypeSubTypes(operand_tensor_ty)));
+        TF::DropRefAndSubTypes(output_tensor_ty),
+        TF::DropRefAndSubTypes(operand_tensor_ty));
     if (!broadcasted_type)
       return merge.emitOpError()
              << "expects all operands to be broadcastable with output type"

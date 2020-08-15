@@ -214,6 +214,7 @@ TypesGatherOpTest/Float32Int32,29
 TypesGatherOpTest/Int32Int32,29
 TypesGatherOpTest/Uint8Int32,29
 TypesGatherOpTest/Int8Int32,29
+-TypesGatherOpTest/.*Int16.*
 
 # hashtable_lookup_test
 # All test excepted the string one should be accelerated
@@ -308,6 +309,8 @@ QuantizedLstmTest/BasicQuantizedLstmTest/29
 
 # quantize_test
 QuantizeOpTest/UINT8,29
+QuantizeOpTest/UInt8UInt8.+,29
+QuantizeOpTest/Int8Int8.+,30
 QuantizeOpTest/INT8,30
 
 # rank
