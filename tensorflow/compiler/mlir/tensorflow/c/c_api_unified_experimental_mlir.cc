@@ -95,7 +95,7 @@ class MlirTensor : public TracingTensorHandle {
 
   tensorflow::DataType DataType() const override {
     tensorflow::DataType type;
-    Status s = ConvertScalarTypeToDataType(value_.getType(), &type);
+    Status s = ConvertToDataType(value_.getType(), &type);
     if (!s.ok()) {
       return tensorflow::DT_INVALID;
     }
@@ -458,6 +458,7 @@ Status MlirAbstractOp::Create(ArrayRef<Value> operands,
       }
     }
   }
+  for (auto& it : attrs_) state_->addAttribute(it.first(), it.second);
   *state = state_.get();
   return Status::OK();
 }
@@ -562,7 +563,7 @@ Status MlirFunction::GetFunctionDef(tensorflow::FunctionDef** f) {
   }
   PassManager pm(func_.getContext());
   pm.addNestedPass<FuncOp>(CreateFunctionalToExecutorDialectConversionPass());
-  pm.addNestedPass<FuncOp>(CreateBreakUpIslandsPass());
+  pm.addPass(CreateBreakUpIslandsPass());
 
   // In case of failure, the `diag_handler` converts MLIR errors emitted to
   // the MLIRContext into a tensorflow::Status.

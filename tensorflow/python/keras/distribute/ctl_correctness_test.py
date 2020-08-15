@@ -234,8 +234,10 @@ class TestDistributionStrategyDnnCorrectness(test.TestCase,
           sync_batchnorm=[True, False]) +
       combinations.combine(
           distribution=strategy_combinations.multiworker_strategies,
-          optimizer_fn=
-          optimizer_combinations.gradient_descent_optimizer_keras_v2_fn,
+          optimizer_fn=[
+              optimizer_combinations.gradient_descent_optimizer_keras_v2_fn,
+              optimizer_combinations.adagrad_optimizer_keras_v2_fn
+          ],
           mode=['eager'],
           iteration_type=['iterator', 'dataset'],
           inside_func=[False, True],
@@ -250,11 +252,6 @@ class TestDistributionStrategyDnnCorrectness(test.TestCase,
     if ('CollectiveAllReduce' in type(distribution).__name__ and
         test_util.is_xla_enabled()):
       self.skipTest('XLA tests fail with MWMS.')
-    # Unable to use required_gpus to check if this is a multiGPU combination
-    # since required_gpus and NamedDistribution cannot be used together.
-    if ('CollectiveAllReduce' in type(distribution).__name__
-        and not inside_func and iteration_type == 'dataset'):
-      self.skipTest('MWMS tests fail with multiple GPUs.')
     self.dnn_correctness(distribution, optimizer_fn, iteration_type,
                          inside_func, sync_batchnorm)
 
