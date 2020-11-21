@@ -49,9 +49,18 @@ ConvolutionTransposed3x3Thin& ConvolutionTransposed3x3Thin::operator=(
 std::string ConvolutionTransposed3x3Thin::GenerateConvolutionTransposedCode(
     const OperationDef& op_def, int src_depth, int dst_depth) {
   auto src_desc = op_def.src_tensors[0];
-  src_desc.SetTextureAddressMode(TextureAddressMode::ZERO);
+  src_desc.SetAddressMode(AddressMode::kZero);
   AddSrcTensor("src_tensor", src_desc);
   AddDstTensor("dst_tensor", op_def.dst_tensors[0]);
+
+  if (op_def.src_tensors.size() == 2) {
+    // dynamic weights
+    BufferDescriptor desc;
+    desc.element_type = op_def.src_tensors[1].data_type;
+    desc.element_size = 4;
+    desc.memory_type = MemoryType::CONSTANT;
+    AddSrcBuffer("weights", desc);
+  }
 
   const auto src_tensor_type = op_def.src_tensors[0].storage_type;
 
@@ -160,8 +169,7 @@ std::string ConvolutionTransposed3x3Thin::GenerateConvolutionTransposedCode(
   for (int d = 0; d < dst_depth; ++d) {
     const std::string layer = std::to_string(d);
     c += "  {\n";
-    c += "  FLT4 bias_val = args.weights.Read(" +
-         std::to_string(36 * filters_index + d) + ");\n";
+    c += "  FLT4 bias_val = args.biases.Read(" + layer + ");\n";
     for (int y = 0; y < 2; ++y) {
       for (int x = 0; x < 2; ++x) {
         const std::string x_coord = "X + " + std::to_string(x);
@@ -188,8 +196,12 @@ int3 ConvolutionTransposed3x3Thin::GetGridSize() const {
   return int3(grid_x, grid_y, grid_z);
 }
 
+std::vector<int> ConvolutionTransposed3x3Thin::GetSpatialWeightsRemap() const {
+  return std::vector<int>{4, 5, 3, 7, 1, 8, 6, 2, 0};
+}
+
 bool IsConvolutionTransposed3x3ThinSupported(
-    const CLDevice& device, const ConvolutionTransposedAttributes& attr) {
+    const ConvolutionTransposedAttributes& attr) {
   return attr.weights.shape.o <= 8 && attr.weights.shape.w == 3 &&
          attr.weights.shape.h == 3 && attr.stride.w == 2 &&
          attr.stride.h == 2 && attr.padding.prepended.w == 1 &&
@@ -197,19 +209,33 @@ bool IsConvolutionTransposed3x3ThinSupported(
          attr.padding.appended.h == 1;
 }
 
-absl::Status CreateConvolutionTransposed3x3Thin(
-    const CreationContext& creation_context, const OperationDef& definition,
-    const ConvolutionTransposedAttributes& attr,
-    ConvolutionTransposed3x3Thin* result) {
-  if (!IsConvolutionTransposed3x3ThinSupported(*creation_context.device,
-                                               attr)) {
-    return absl::InvalidArgumentError(
-        "ConvolutionTransposed3x3Thin doesn't support this attributes");
-  }
-  *result = ConvolutionTransposed3x3Thin(definition, attr);
-  RETURN_IF_ERROR(
-      result->UploadData(attr.weights, attr.bias, creation_context.context));
-  return absl::OkStatus();
+ConvolutionTransposed3x3Thin CreateConvolutionTransposed3x3Thin(
+    const GpuInfo& gpu_info, const OperationDef& definition,
+    const ConvolutionTransposedAttributes& attr) {
+  ConvolutionTransposed3x3Thin result(definition, attr);
+  result.UploadWeights(attr.weights);
+
+  TensorLinearDescriptor desc;
+  desc.storage_type = LinearStorageType::TEXTURE_2D;
+  desc.element_type = definition.GetDataType();
+  desc.UploadLinearData(attr.bias);
+  result.args_.AddObject(
+      "biases", absl::make_unique<TensorLinearDescriptor>(std::move(desc)));
+  return result;
+}
+
+ConvolutionTransposed3x3Thin CreateConvolutionTransposed3x3ThinDynamicWeights(
+    const GpuInfo& gpu_info, const OperationDef& definition,
+    const ConvolutionTransposedAttributes& attr) {
+  ConvolutionTransposed3x3Thin result(definition, attr);
+
+  TensorLinearDescriptor desc;
+  desc.storage_type = LinearStorageType::TEXTURE_2D;
+  desc.element_type = definition.GetDataType();
+  desc.UploadLinearData(attr.bias);
+  result.args_.AddObject(
+      "biases", absl::make_unique<TensorLinearDescriptor>(std::move(desc)));
+  return result;
 }
 
 }  // namespace cl

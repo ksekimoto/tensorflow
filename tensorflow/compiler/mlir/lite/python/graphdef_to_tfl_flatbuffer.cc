@@ -55,7 +55,7 @@ Status ConvertGraphDefToTFLiteFlatBuffer(const toco::ModelFlags& model_flags,
   // Parse input arrays.
   std::vector<string> node_names;
   std::vector<string> node_dtypes;
-  std::vector<std::vector<int>> node_shapes;
+  std::vector<llvm::Optional<std::vector<int>>> node_shapes;
   std::vector<llvm::Optional<double>> node_mins;
   std::vector<llvm::Optional<double>> node_maxs;
 
@@ -90,9 +90,10 @@ Status ConvertGraphDefToTFLiteFlatBuffer(const toco::ModelFlags& model_flags,
   pass_config.emit_builtin_tflite_ops = emit_builtin_tflite_ops;
   pass_config.lower_tensor_list_ops = true;
 
-  return internal::ConvertMLIRToTFLiteFlatBuffer(toco_flags, std::move(module),
-                                                 pass_config, result,
-                                                 /*session=*/llvm::None);
+  return internal::ConvertMLIRToTFLiteFlatBuffer(
+      toco_flags, std::move(module), pass_config, /*saved_model_tags=*/{},
+      result,
+      /*session=*/llvm::None);
 }
 
 }  // namespace tensorflow

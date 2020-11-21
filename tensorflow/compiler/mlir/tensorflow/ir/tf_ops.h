@@ -43,6 +43,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_traits.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_types.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_verifiers.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tfrt_ops.h"
 
 namespace mlir {
 namespace TF {
@@ -103,7 +104,7 @@ class TensorFlowDialect : public Dialect {
   // operations to the dialect. Hooks will only apply to subsequent
   // instantations of the Dialect/MLIRContext.
   static void RegisterAdditionalOperationHook(AdditionalOpFunction fn) {
-    additional_operation_hooks_->push_back(std::move(fn));
+    GetAdditionalOperationHooks()->push_back(std::move(fn));
   }
 
   // Re-define publicly the protected addOperations() method from the Dialect
@@ -112,14 +113,38 @@ class TensorFlowDialect : public Dialect {
   // same interface.
   template <typename... Args>
   void addOperations() {
-    (void)std::initializer_list<int>{
-        0, (addOperation(AbstractOperation::get<Args>(*this)), 0)...};
+    Dialect::addOperations<Args...>();
+  }
+
+  using ConstantFoldHook = LogicalResult (*)(Operation *, ArrayRef<Attribute>,
+                                             SmallVectorImpl<OpFoldResult> &);
+  static void RegisterConstantFoldHook(ConstantFoldHook fn) {
+    constant_fold_hook_ = std::move(fn);
+  }
+
+  static LogicalResult constantFold(Operation *op, ArrayRef<Attribute> operands,
+                                    SmallVectorImpl<OpFoldResult> &results) {
+    if (constant_fold_hook_) return constant_fold_hook_(op, operands, results);
+    return failure();
+  }
+
+  using DecodeConstantHook = LogicalResult (*)(OpaqueElementsAttr input,
+                                               ElementsAttr &output);
+  static void RegisterDecodeConstantHook(DecodeConstantHook fn) {
+    decode_constant_hook_ = std::move(fn);
+  }
+  static LogicalResult decode(OpaqueElementsAttr input, ElementsAttr &output) {
+    if (decode_constant_hook_) return decode_constant_hook_(input, output);
+    return failure();
   }
 
  private:
   // Hook functions which may add additional operations to the dialect.
   // These are invoked at construction time.
-  static std::vector<AdditionalOpFunction> *additional_operation_hooks_;
+  static std::vector<AdditionalOpFunction> *GetAdditionalOperationHooks();
+
+  static ConstantFoldHook constant_fold_hook_;
+  static DecodeConstantHook decode_constant_hook_;
 };
 
 }  // namespace TF

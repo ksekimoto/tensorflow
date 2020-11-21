@@ -1623,4 +1623,23 @@ static Shape MergeDimensions(absl::Span<const size_t> segs,
   return absl::nullopt;
 }
 
+Shape ShapeUtil::DeviceShapeToHostShape(Shape s) {
+  ForEachMutableSubshape(&s, [](Shape* subshape, const ShapeIndex& index) {
+    if (subshape->IsArray()) {
+      subshape->mutable_layout()->clear_tiles();
+      subshape->mutable_layout()->set_memory_space(Layout::kDefaultMemorySpace);
+    }
+  });
+  return s;
+}
+
+/*static*/ bool ShapeUtil::CanUpcastIntegral(const Shape& from,
+                                             const Shape& to) {
+  return ElementIsIntegral(from) && ElementIsIntegral(to) &&
+         ElementIsSigned(from) == ElementIsSigned(to) &&
+         primitive_util::BitWidth(from.element_type()) <=
+             primitive_util::BitWidth(to.element_type()) &&
+         CompatibleIgnoringElementType(from, to);
+}
+
 }  // namespace xla
