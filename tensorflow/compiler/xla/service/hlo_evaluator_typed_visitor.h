@@ -1770,6 +1770,10 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
         TF_ASSIGN_OR_RETURN(parent_->evaluated_[map], MapImpl<uint8>(map));
         break;
       }
+      case U16: {
+        TF_ASSIGN_OR_RETURN(parent_->evaluated_[map], MapImpl<uint16>(map));
+        break;
+      }
       case U32: {
         TF_ASSIGN_OR_RETURN(parent_->evaluated_[map], MapImpl<uint32>(map));
         break;
@@ -1780,6 +1784,10 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
       }
       case S8: {
         TF_ASSIGN_OR_RETURN(parent_->evaluated_[map], MapImpl<int8>(map));
+        break;
+      }
+      case S16: {
+        TF_ASSIGN_OR_RETURN(parent_->evaluated_[map], MapImpl<int16>(map));
         break;
       }
       case S32: {
@@ -1941,7 +1949,7 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     TF_ASSIGN_OR_RETURN(
         auto inferred_return_shape,
         ShapeInference::InferReduceWindowShape(
-            reduce_window_instr->input_array_shapes(),
+            reduce_window_instr->input_shapes(),
             reduce_window_instr->init_value_shapes(), window,
             /*to_apply_shape=*/function->ComputeProgramShape()));
     TF_RET_CHECK(
@@ -1952,7 +1960,7 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
         << ShapeUtil::HumanStringWithLayout(inferred_return_shape);
 
     absl::InlinedVector<const Literal*, 2> input_literal_vec, init_literal_vec;
-    auto input_arrays = reduce_window_instr->input_arrays();
+    auto input_arrays = reduce_window_instr->inputs();
     auto init_values = reduce_window_instr->init_values();
     int64 num_args = input_arrays.size();
     for (int i = 0; i < num_args; ++i) {

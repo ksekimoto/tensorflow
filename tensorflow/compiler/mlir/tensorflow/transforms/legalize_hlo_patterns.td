@@ -216,3 +216,102 @@ def : Pat<(HLO_DotGeneralOp:$old_value AnyStaticShapeTensor:$lhs,
                AnyStaticShapeTensor:$rhs, $dot_dimension_numbers,
                $precision_config),
           (ConvertDotGeneralOp $old_value)>;
+
+def IsZero : Constraint<CPred<
+  "$0.isSplat() && $0.getSplatValue<APInt>() == 0">>;
+def ConvertPadOp : NativeCodeCall<
+  "ConvertPadOp($_builder, $0.getDefiningOp())">;
+def : Pat<(HLO_PadOp:$old_value $input, $pad_value, $pad_low, $pad_high,
+               $pad_interior),
+          (ConvertPadOp $old_value),
+          [(IsZero $pad_interior)]>;
+
+class FloatValueEquals<string val> : Constraint<CPred<
+  "$0.isa<SplatElementsAttr>() && "
+  "$0.cast<SplatElementsAttr>().getSplatValue<APFloat>().isExactlyValue(" # val # ")">>;
+def SameValue : Constraint<CPred<"$0 == $1">>;
+def FloatOrDefaultCompare : Constraint<CPred<
+  "!$0 || $0.getValue() == \"FLOAT\"">>;
+
+// Converts a soup of HLOs representing banker rounding (round x.5 to nearest
+// even) to tf.round.
+// The pattern matched executes the following computation:
+// frac = x - floor(x)
+// to_even = (floor(x) - 2 * floor(0.5 * x)) == 1
+// if frac > 0.5 || (frac == 0.5 && to_even)
+//   return floor + 1
+// else
+//   return floor
+def : Pat<(HLO_SelectOp
+            (HLO_OrOp
+              (HLO_CompareOp (HLO_SubOp:$frac
+                               $input,
+                               (HLO_FloorOp:$floor $input)),
+                             (HLO_ConstOp $half),
+                             HLO_COMPARISON_DIRECTION_GT,
+                             $compare_type0),
+              (HLO_AndOp
+                (HLO_CompareOp
+                  $frac1,
+                  (HLO_ConstOp $half1),
+                  HLO_COMPARISON_DIRECTION_EQ,
+                  $compare_type1),
+                (HLO_CompareOp
+                  (HLO_SubOp
+                    $floor1,
+                    (HLO_MulOp
+                      (HLO_FloorOp (HLO_MulOp $input, (HLO_ConstOp $half2))),
+                      (HLO_ConstOp $two))),
+                  (HLO_ConstOp $one1),
+                  HLO_COMPARISON_DIRECTION_EQ,
+                  $compare_type2))),
+            (HLO_AddOp $floor2, (HLO_ConstOp $one)),
+            $floor3),
+          (TF_RoundOp $input),
+          [(FloatValueEquals<"1.0"> $one),
+           (FloatValueEquals<"1.0"> $one1),
+           (FloatValueEquals<"2.0"> $two),
+           (FloatValueEquals<"0.5"> $half),
+           (FloatValueEquals<"0.5"> $half1),
+           (FloatValueEquals<"0.5"> $half2),
+           (SameValue $floor, $floor1),
+           (SameValue $floor, $floor2),
+           (SameValue $floor, $floor3),
+           (SameValue $frac, $frac1),
+           (FloatOrDefaultCompare $compare_type0),
+           (FloatOrDefaultCompare $compare_type1),
+           (FloatOrDefaultCompare $compare_type2)]>;
+
+// Converts a soup of HLOs representing floor_mod to tf.FloorMod.
+// The pattern matched executes the following computation:
+//
+// rem = remainder(arg0, arg1)
+// for i in 0 to len(arg1):
+//    if ((rem[i] < 0 != arg0[i] < 0) && arg0[i] != 0)
+//       rem[i] += arg1[i]
+// return rem
+def : Pat<
+(HLO_SelectOp
+  (HLO_AndOp
+    (HLO_CompareOp
+      (HLO_CompareOp:$rltz
+        (HLO_RemOp:$rem $arg, $arg1),
+        (HLO_ConstOp $cst),
+        HLO_COMPARISON_DIRECTION_LT,
+        $compare_type),
+      (HLO_CompareOp:$arg1ltz $arg1, (HLO_ConstOp $cst1), HLO_COMPARISON_DIRECTION_LT, $compare_type1),
+      HLO_COMPARISON_DIRECTION_NE,
+      $compare_type2),
+    (HLO_CompareOp:$rnz $rem1, (HLO_ConstOp $cst2), HLO_COMPARISON_DIRECTION_NE, $compare_type3)),
+  (HLO_AddOp $rem2, $arg1),
+  $rem3),
+(TF_FloorModOp $arg, $arg1),
+[(FloatValueEquals<"0.0"> $cst),
+(FloatValueEquals<"0.0"> $cst1),
+(FloatValueEquals<"0.0"> $cst2),
+(SameValue $rem, $rem1),
+(SameValue $rem, $rem2),
+(SameValue $rem, $rem3),
+(FloatOrDefaultCompare $compare_type),
+(FloatOrDefaultCompare $compare_type1),
+(FloatOrDefaultCompare $compare_type2)]>;

@@ -24,6 +24,7 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include "absl/types/optional.h"
 #include "tensorflow/core/kernels/batching_util/batch_scheduler.h"
 #include "tensorflow/core/kernels/batching_util/periodic_function.h"
 #include "tensorflow/core/lib/core/errors.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "tensorflow/core/platform/byte_order.h"
 #include "tensorflow/core/platform/cpu_info.h"
 #include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/thread_annotations.h"
 #include "tensorflow/core/platform/threadpool_interface.h"
 #include "tensorflow/core/platform/types.h"
@@ -80,7 +82,9 @@ class AdaptiveSharedBatchScheduler
  public:
   ~AdaptiveSharedBatchScheduler() {
     // Finish processing batches before destroying other class members.
-    batch_thread_pool_.reset();
+    if (owned_batch_thread_pool_) {
+      delete batch_thread_pool_;
+    }
   }
 
   struct Options {
@@ -95,10 +99,11 @@ class AdaptiveSharedBatchScheduler
     // for num_batch_threads allows for large in_flight_batches_limit_, which
     // will harm latency for some time once load increases again.
     int64 num_batch_threads = port::MaxParallelism();
-    // You can pass a ThreadPoolInterface directly rather than the above two
+    // You can pass a ThreadPool directly rather than the above two
     // parameters.  If given, the above two parameers are ignored.  Ownership of
     // the threadpool is not transferred.
-    thread::ThreadPoolInterface* thread_pool = nullptr;
+    thread::ThreadPool* thread_pool = nullptr;
+
     // Lower bound for in_flight_batches_limit_. As discussed above, can be used
     // to minimize the damage caused by the random walk under low load.
     int64 min_in_flight_batches_limit = 1;
@@ -128,8 +133,14 @@ class AdaptiveSharedBatchScheduler
       std::shared_ptr<AdaptiveSharedBatchScheduler<TaskType>>* scheduler);
 
   struct QueueOptions {
-    // Maximum size of each batch.
+    // Maximum size of a batch that's formed within
+    // `ASBSQueue<TaskType>::Schedule`.
     int max_batch_size = 1000;
+    // Maximum size of input task, which is submitted to the queue by
+    // calling `ASBSQueue<TaskType>::Schedule` and used to form batches.
+    //
+    // If specified, it should be larger than or equal to 'max_batch_size'.
+    absl::optional<int> max_input_task_size = absl::nullopt;
     // Maximum number of enqueued (i.e. non-scheduled) batches.
     int max_enqueued_batches = 10;
     // Amount of time non-full batches must wait before becoming schedulable.
@@ -144,7 +155,7 @@ class AdaptiveSharedBatchScheduler
     // Including this option allows the scheduler to pack batches better and
     // should usually improve overall throughput.
     std::function<Status(std::unique_ptr<TaskType>* input_task, int first_size,
-                         int max_size,
+                         int max_batch_size,
                          std::vector<std::unique_ptr<TaskType>>* output_tasks)>
         split_input_task_func;
   };
@@ -204,7 +215,9 @@ class AdaptiveSharedBatchScheduler
   mutex mu_;
 
   // Responsible for running the batch processing callbacks.
-  std::unique_ptr<thread::ThreadPool> batch_thread_pool_;
+  thread::ThreadPool* batch_thread_pool_;
+
+  bool owned_batch_thread_pool_ = false;
 
   // Limit on number of batches which can be concurrently processed.
   // Non-integer values correspond to probabilistic limits - i.e. a value of 3.2
@@ -387,10 +400,12 @@ AdaptiveSharedBatchScheduler<TaskType>::AdaptiveSharedBatchScheduler(
   std::random_device device;
   rand_engine_.seed(device());
   if (options.thread_pool == nullptr) {
-    batch_thread_pool_.reset(new thread::ThreadPool(
-        GetEnv(), options.thread_pool_name, options.num_batch_threads));
+    owned_batch_thread_pool_ = true;
+    batch_thread_pool_ = new thread::ThreadPool(
+        GetEnv(), options.thread_pool_name, options.num_batch_threads);
   } else {
-    batch_thread_pool_.reset(new thread::ThreadPool(options.thread_pool));
+    owned_batch_thread_pool_ = false;
+    batch_thread_pool_ = options.thread_pool;
   }
 }
 
@@ -406,6 +421,15 @@ Status AdaptiveSharedBatchScheduler<TaskType>::AddQueue(
     return errors::InvalidArgument(
         "max_enqueued_batches must be positive; was ",
         options.max_enqueued_batches);
+  }
+  if (options.max_input_task_size.has_value()) {
+    if (options.max_input_task_size.value() < options.max_batch_size) {
+      return errors::InvalidArgument(
+          "max_input_task_size must be larger than or equal to max_batch_size;"
+          "got max_input_task_size as ",
+          options.max_input_task_size.value(), " and max_batch_size as ",
+          options.max_batch_size);
+    }
   }
   internal::ASBSQueue<TaskType>* asbs_queue_raw;
   queue->reset(asbs_queue_raw = new internal::ASBSQueue<TaskType>(
@@ -518,7 +542,8 @@ void AdaptiveSharedBatchScheduler<TaskType>::CallbackWrapper(
   profiler::TraceMeConsumer trace_me(
       [&] {
         return profiler::TraceMeEncode(
-            "ProcessBatch", {{"batch_size_before_padding", batch->size()}});
+            "ProcessBatch", {{"batch_size_before_padding", batch->size()},
+                             {"_r", 2} /*root_event*/});
       },
       profiler::ContextType::kAdaptiveSharedBatchScheduler,
       batch->traceme_context_id());
@@ -608,6 +633,13 @@ Status ASBSQueue<TaskType>::Schedule(std::unique_ptr<TaskType>* task) {
                                    " is larger than maximum batch size ",
                                    options_.max_batch_size);
   }
+  if (options_.max_input_task_size.has_value() &&
+      (size > options_.max_input_task_size.value())) {
+    return errors::InvalidArgument("Task size ", size,
+                                   " is larger than max input task size ",
+                                   options_.max_input_task_size.value());
+  }
+
   std::vector<std::unique_ptr<TaskType>> tasks_to_schedule;
   std::vector<ASBSBatch<TaskType>*> new_batches;
   bool closed_batch = false;
